@@ -1699,19 +1699,11 @@ function goTo(s) {
 }
 
 function nextStep() {
-  // Bloqueo duro — folio duplicado
+  // Bloqueo duro de duplicado en paso 0
   if (currentStep === 0 && _folioDuplicado) {
-    showToast('⛔ ALTO: El folio ya existe. Corrige el número antes de continuar.', 'warn');
+    showToast('ALTO: El folio ya existe. Corrige el número antes de continuar.', 'warn');
     document.getElementById('folio').focus();
     return;
-  }
-  // Bloqueo duro — folio no verificado aún
-  if (currentStep === 0 && SHEET_WEBAPP_URL) {
-    const folioVal = (document.getElementById('folio').value || '').trim();
-    if (folioVal.length >= 3 && !_folioVerificado) {
-      showToast('⚠ Espera a que se complete la verificación del folio.', 'warn');
-      return;
-    }
   }
   if (!validateStep(currentStep)) return;
   if (currentStep === STEPS - 1) {
@@ -1785,18 +1777,16 @@ function validateStep(s) {
   // Bloqueo adicional de duplicado en paso 0
   if (s === 0 && _folioDuplicado) {
     const hint = document.getElementById('folio-status-hint');
-    if (hint) hint.innerHTML = '⛔ <strong style="color:#C0392B">ALTO — Folio duplicado. No se puede continuar.</strong>';
+    if (hint) hint.innerHTML = '<strong style="color:#C0392B">ALTO — Folio duplicado. No se puede continuar.</strong>';
     document.getElementById('folio').focus();
     return false;
   }
-  // Bloqueo si el folio aún no fue verificado por el servidor
-  if (s === 0 && SHEET_WEBAPP_URL) {
-    const folioVal = (document.getElementById('folio').value || '').trim();
+  // Bloqueo si el folio aún no se ha verificado (está en estado "Verificando")
+  if (s === 0) {
     const hint = document.getElementById('folio-status-hint');
     const hintTxt = hint ? hint.textContent : '';
-    if (folioVal.length >= 3 && !_folioVerificado) {
-      if (hint) hint.innerHTML = '<strong style="color:#C0392B">Espera — verificando folio con el servidor…</strong>';
-      showToast('Espera a que se verifique el folio antes de continuar.', 'warn');
+    if (hintTxt.includes('Verificando')) {
+      hint.innerHTML = '<strong style="color:#C0392B">Espera — verificando folio...</strong>';
       return false;
     }
   }
@@ -1805,8 +1795,7 @@ function validateStep(s) {
 
 // ───── SYNC FOLIO + VERIFICACIÓN DE DUPLICADO ─────
 let _folioTimer = null;
-let _folioDuplicado  = false;
-let _folioVerificado = false;  // true solo cuando el servidor confirmó que el folio NO existe
+let _folioDuplicado = false;
 
 function syncFolio(v) {
   document.getElementById('hdr-folio').textContent = v ? '#' + v : '—';
@@ -1816,31 +1805,16 @@ function syncFolio(v) {
 
   el.classList.toggle('filled', !!v);
   el.style.borderColor = '';
-  el.style.boxShadow   = '';
   if (hint) { hint.textContent = ''; hint.style.color = ''; }
 
-  // Resetear flags mientras el usuario escribe
-  _folioDuplicado  = false;
-  _folioVerificado = false;
-  if (btn && currentStep === 0) {
-    btn.disabled     = true;   // bloquear hasta que el servidor confirme
-    btn.style.opacity = '0.5';
-    btn.title        = 'Esperando verificación del folio…';
-  }
+  // Desbloquear mientras escribe
+  _folioDuplicado = false;
+  if (btn && currentStep === 0) btn.disabled = false;
 
   clearTimeout(_folioTimer);
-  if (!v || v.length < 3) {
-    // Folio muy corto — desbloquear sin verificar (validación de campo lo atrapará)
-    if (btn && currentStep === 0) { btn.disabled = false; btn.style.opacity = ''; btn.title = ''; }
-    return;
-  }
+  if (!v || v.length < 3) return;
 
-  if (!SHEET_WEBAPP_URL) {
-    // Sin conexión configurada — permitir continuar (modo offline)
-    _folioVerificado = true;
-    if (btn && currentStep === 0) { btn.disabled = false; btn.style.opacity = ''; btn.title = ''; }
-    return;
-  }
+  if (!SHEET_WEBAPP_URL) return;
 
   // Marcar como "verificando"
   if (hint) { hint.textContent = 'Verificando folio…'; hint.style.color = '#6B6560'; }
@@ -1851,49 +1825,34 @@ function syncFolio(v) {
       const r = await fetch(SHEET_WEBAPP_URL + '?action=checkFolio&folio=' + encodeURIComponent(v), { cache: 'no-cache' });
       const d = await r.json();
       if (d.exists) {
-        _folioDuplicado  = true;
-        _folioVerificado = false;
+        _folioDuplicado = true;
         el.style.cssText += ';border-color:#C0392B !important;box-shadow:0 0 0 3px rgba(192,57,43,0.15) !important;';
         if (hint) {
-          hint.innerHTML = '⛔ <strong style="color:#C0392B">FOLIO #' + v + ' YA ESTÁ REGISTRADO.</strong> Verifica el número antes de continuar.';
+          hint.innerHTML = '<strong style="color:#C0392B">ALTO — Folio #' + v + ' ya está registrado.</strong> Verifica el número antes de continuar.';
           hint.style.color = '#C0392B';
         }
+        // Bloquear botón Siguiente
         if (btn && currentStep === 0) {
-          btn.disabled     = true;
+          btn.disabled = true;
           btn.style.opacity = '0.4';
-          btn.title        = 'Folio duplicado — corrige el número de folio';
+          btn.title = 'Folio duplicado — corrige el número de folio';
         }
-        showToast('⛔ ALTO: Folio #' + v + ' ya existe en el sistema', 'warn');
+        showToast('ALTO: Folio #' + v + ' ya existe en el sistema', 'warn');
       } else {
-        _folioDuplicado  = false;
-        _folioVerificado = true;
+        _folioDuplicado = false;
         el.style.borderColor = '#1A6B3A';
-        el.style.boxShadow   = '0 0 0 3px rgba(26,107,58,0.12)';
         if (hint) {
           hint.textContent = '✓ Folio disponible';
           hint.style.color = '#1A6B3A';
         }
         if (btn && currentStep === 0) {
-          btn.disabled     = false;
+          btn.disabled = false;
           btn.style.opacity = '';
-          btn.title        = '';
+          btn.title = '';
         }
       }
     } catch(e) {
-      // Error de red — bloquear con aviso, NO permitir continuar sin verificar
-      _folioDuplicado  = false;
-      _folioVerificado = false;
-      if (hint) {
-        hint.innerHTML = '⚠ <strong style="color:#7A5C00">Sin conexión — no se pudo verificar el folio.</strong> Revisa la red e intenta de nuevo.';
-        hint.style.color = '#7A5C00';
-      }
-      el.style.cssText += ';border-color:#C9922A !important;box-shadow:0 0 0 3px rgba(201,146,42,0.15) !important;';
-      if (btn && currentStep === 0) {
-        btn.disabled     = true;
-        btn.style.opacity = '0.4';
-        btn.title        = 'No se pudo verificar el folio — revisa la conexión';
-      }
-      showToast('⚠ Sin conexión al servidor. No se puede verificar el folio.', 'warn');
+      if (hint) { hint.textContent = ''; }
     }
   }, 600);
 }
@@ -2179,10 +2138,9 @@ async function saveBoleta() {
 
   } catch (err) {
     console.error('Sheets error:', err);
-    // No guardar en modo fallback — podría ser un duplicado no verificado
-    showToast('⚠ Error de conexión al guardar. Verifica la red e intenta de nuevo.', 'warn');
+    // Fallback: guardar offline con aviso
+    showSuccess(folio, 'error', err.message);
     nextBtn.disabled = false;
-    nextBtn.textContent = '💾 Guardar boleta';
   }
 }
 
@@ -2318,8 +2276,6 @@ function nuevaBoleta() {
     g.querySelector('input').checked = false;
   });
   // Resetear UI de navegación
-  _folioDuplicado  = false;
-  _folioVerificado = false;
   document.getElementById('success-state').classList.remove('show');
   document.getElementById('btn-next').style.display = '';
   document.getElementById('btn-next').disabled = false;
@@ -2359,9 +2315,6 @@ function exportCSV() {
 
 // Init date to today
 document.getElementById('fecha').valueAsDate = new Date();
-// Ping Sheets connection y cargar personal
-pingSheets();
-cargarPersonalDesdeSheets();
 
 // ═══════ SISTEMA DE ACCESO ═══════
 const USUARIOS = [
@@ -2416,6 +2369,10 @@ function togglePass() {
 
 // Bloquear scroll del body mientras está el login
 document.body.style.overflow = 'hidden';
+
+// Inicializar conexión y personal — se llama aquí, después de declarar todo
+pingSheets();
+cargarPersonalDesdeSheets();
 
 // ───── CARGAR PERSONAL DESDE SHEETS (sobreescribe opciones del select) ─────
 async function cargarPersonalDesdeSheets() {
